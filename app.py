@@ -10,6 +10,18 @@ from flask_login import (
     current_user,
     login_required,
     login_user,
+ # Python standard libraries
+import json
+import os
+import sqlite3
+
+# Third-party libraries
+from flask import Flask, redirect, request, url_for
+from flask_login import (
+    LoginManager,
+    current_user,
+    login_required,
+    login_user,
     logout_user,
 )
 from oauthlib.oauth2 import WebApplicationClient
@@ -18,6 +30,8 @@ import requests
 # Internal imports
 from db import init_db_command
 from user import User
+import logging
+import sys
 
 # Configuration
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", None)
@@ -28,6 +42,9 @@ GOOGLE_DISCOVERY_URL = (
 
 # Flask app setup
 app = Flask(__name__)
+
+app.logger.addHandler(logging.StreamHandler(sys.stdout))
+app.logger.setLevel(logging.INFO)
 app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(24)
 
 # User session management setup
@@ -37,14 +54,14 @@ login_manager.init_app(app)
 
 # Naive database setup
 #try:
-    #init_db_command()
+#    init_db_command()
 #except sqlite3.OperationalError:
     # Assume it's already been created
-    #pass
+#    pass
 
 # OAuth 2 client setup
 client = WebApplicationClient(GOOGLE_CLIENT_ID)
-
+print(f"client={client}")
 # Flask-Login helper to retrieve a user from our db
 @login_manager.user_loader
 def load_user(user_id):
@@ -54,11 +71,11 @@ def load_user(user_id):
 def index():
     if current_user.is_authenticated:
         return (
-            "<p>Hello, {}! You're logged in! Email: {}</p>"
+            "<p>Hello, {}! You're logged in as {}! Email: {}</p>"
             "<div><p>Google Profile Picture:</p>"
             '<img src="{}" alt="Google profile pic"></img></div>'
             '<a class="button" href="/logout">Logout</a>'.format(
-                current_user.name, current_user.email, current_user.profile_pic
+                current_user.name, current_user.role, current_user.email, current_user.profile_pic
             )
         )
     else:
@@ -67,19 +84,27 @@ def index():
 def get_google_provider_cfg():
     return requests.get(GOOGLE_DISCOVERY_URL).json()
 
+def httpsify(url):
+    https_url = url
+
+    if https_url.startswith("http:"):
+        https_url = "https:" + https_url[len("http:"):]
+    return https_url
+
 @app.route("/login")
 def login():
     # Find out what URL to hit for Google login
     google_provider_cfg = get_google_provider_cfg()
     authorization_endpoint = google_provider_cfg["authorization_endpoint"]
-
+    
     # Use library to construct the request for Google login and provide
     # scopes that let you retrieve user's profile from Google
     request_uri = client.prepare_request_uri(
         authorization_endpoint,
-        redirect_uri=request.base_url + "/callback",
+        redirect_uri=httpsify(request.base_url) + "/callback",
         scope=["openid", "email", "profile"],
     )
+    app.logger.info('login redirect: %s', request_uri)
     return redirect(request_uri)
 
 @app.route("/login/callback")
@@ -91,11 +116,13 @@ def callback():
     google_provider_cfg = get_google_provider_cfg()
     token_endpoint = google_provider_cfg["token_endpoint"]
     # Prepare and send a request to get tokens! Yay tokens!
+
+        
     token_url, headers, body = client.prepare_token_request(
         token_endpoint,
-     authorization_response=request.url,
-        redirect_url=request.base_url,
-     code=code
+        authorization_response=httpsify(request.url),
+        redirect_url=httpsify(request.base_url),
+        code=code
     )
     token_response = requests.post(
         token_url,
@@ -114,6 +141,7 @@ def callback():
     uri, headers, body = client.add_token(userinfo_endpoint)
     userinfo_response = requests.get(uri, headers=headers, data=body)
 
+
     # You want to make sure their email is verified.
     # The user authenticated with Google, authorized your
     # app, and now you've verified their email through Google!
@@ -128,13 +156,15 @@ def callback():
     # Create a user in your db with the information provided
     # by Google
     user = User(
-        id_=unique_id, name=users_name, email=users_email, profile_pic=picture
+        id_=unique_id, name=users_name, email=users_email, profile_pic=picture, role=User.DEFAULT_ROLE
     )
 
     # Doesn't exist? Add it to the database.
-    if not User.get(unique_id):
-        User.create(unique_id, users_name, users_email, picture)
-
+    dbUser = User.get(unique_id)
+    if not dbUser:
+        User.create(user.id, user.name, user.email, user.profile_pic, user.role)
+    else:
+        user=dbUser
     # Begin user session by logging the user in
     login_user(user)
 
@@ -148,9 +178,5 @@ def logout():
     return redirect(url_for("index"))
 
 if __name__ == "__main__":
-   # app.run(ssl_context="adhoc")
-   app.run()
-
-
-
-
+    app.run(ssl_context="adhoc")
+#    app.run()

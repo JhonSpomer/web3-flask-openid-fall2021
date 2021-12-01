@@ -1,16 +1,15 @@
 # http://flask.pocoo.org/docs/1.0/tutorial/database/
 import psycopg2
-import os 
+import os
 
 import click
 from flask import current_app, g
 from flask.cli import with_appcontext
 
 def get_db():
-    
-    DATABASE_URL = os.environ.get(‘DATABASE_URL’)
+    DATABASE_URL = os.environ.get('DATABASE_URL')
     g.db = psycopg2.connect(DATABASE_URL)
-    
+
     return g.db
 
 def close_db(e=None):
@@ -18,7 +17,6 @@ def close_db(e=None):
 
     if db is not None:
         db.close()
-
 
 CREATE_USERTABLE=f"""
 CREATE TABLE IF NOT EXISTS usertable (
